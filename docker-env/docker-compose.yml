@@ -1,0 +1,322 @@
+services:
+
+  namenode:
+    image: bde2020/hadoop-namenode:2.0.0-hadoop3.2.1-java8
+    networks:
+      - hadoop
+    container_name: namenode
+    volumes:
+      - hadoop_namenode:/hadoop/dfs/name
+      - ./hadoop/formation:/data/hdfs/formation
+      - ./opensearch/bano-data:/data/hdfs/bano-data
+    environment:
+      - CLUSTER_NAME=groupe_4
+    env_file:
+      - ./hadoop.env
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.hostname == akswnc4.aksw.uni-leipzig.de
+    ports:
+      - 9870:9870
+      - 9000:9000
+
+  datanode1:
+    image: bde2020/hadoop-datanode:2.0.0-hadoop3.2.1-java8
+    container_name: datanode1
+    networks:
+      - hadoop
+    volumes:
+      - hadoop_datanode_1:/hadoop/dfs/data
+    env_file:
+      - ./hadoop.env
+    environment:
+      SERVICE_PRECONDITION: "namenode:9870"
+    deploy:
+      mode: global
+  datanode2:
+    image: bde2020/hadoop-datanode:2.0.0-hadoop3.2.1-java8
+    container_name: datanode2
+    networks:
+      - hadoop
+    volumes:
+      - hadoop_datanode_2:/hadoop/dfs/data
+    env_file:
+      - ./hadoop.env
+    environment:
+      SERVICE_PRECONDITION: "namenode:9870"
+    deploy:
+      mode: global
+
+
+  resourcemanager:
+    image: bde2020/hadoop-resourcemanager:2.0.0-hadoop3.2.1-java8
+    container_name: resourcemanager
+    networks:
+      - hadoop
+    environment:
+      SERVICE_PRECONDITION: "namenode:9870 datanode1:9864 datanode2:9864"
+    env_file:
+      - ./hadoop.env
+    volumes:
+      - ./files:/data/yarn/formation
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.hostname == akswnc4.aksw.uni-leipzig.de
+    healthcheck:
+      disable: true
+  nodemanager1:
+    image: bde2020/hadoop-nodemanager:2.0.0-hadoop3.2.1-java8
+    container_name: nodemanager1
+    networks:
+      - hadoop
+    environment:
+      SERVICE_PRECONDITION: "namenode:9870 datanode1:9864 resourcemanager:8088"
+    env_file:
+      - ./hadoop.env
+    deploy:
+      mode: global
+  nodemanager2:
+    image: bde2020/hadoop-nodemanager:2.0.0-hadoop3.2.1-java8
+    container_name: nodemanager2
+    networks:
+      - hadoop
+    environment:
+      SERVICE_PRECONDITION: "namenode:9870 datanode2:9864 resourcemanager:8088"
+    env_file:
+      - ./hadoop.env
+    deploy:
+      mode: global
+  historyserver:
+    image: bde2020/hadoop-historyserver:2.0.0-hadoop3.2.1-java8
+    container_name: historyserver
+    networks:
+      - hadoop
+    volumes:
+      - hadoop_historyserver:/hadoop/yarn/timeline
+    environment:
+      SERVICE_PRECONDITION: "namenode:9870 datanode1:9864 datanode2:9864 resourcemanager:8088"
+    env_file:
+      - ./hadoop.env
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.hostname == akswnc4.aksw.uni-leipzig.de
+    ports:
+      - 28188:8188
+
+  hive-server:
+    image: bde2020/hive:2.3.2-postgresql-metastore
+    container_name: hive-server
+    env_file:
+      - ./hadoop-hive.env
+    volumes:
+      - ./files:/data/hive/formation
+    environment:
+      HIVE_CORE_CONF_javax_jdo_option_ConnectionURL: "jdbc:postgresql://hive-metastore/metastore"
+      SERVICE_PRECONDITION: "hive-metastore:9083"
+    ports:
+      - "10000:10000"
+    networks:
+      - hadoop
+
+  hive-metastore:
+    image: bde2020/hive:2.3.2-postgresql-metastore
+    container_name: hive-metastore
+    env_file:
+      - ./hadoop-hive.env
+    command: /opt/hive/bin/hive --service metastore
+    environment:
+      SERVICE_PRECONDITION: "namenode:9000 namenode:9870 datanode1:9864 datanode2:9864 hive-metastore-postgresql:5432"
+    ports:
+      - "9083:9083"
+    networks:
+      - hadoop
+
+  hive-metastore-postgresql:
+    image: bde2020/hive-metastore-postgresql:2.3.0
+    container_name: hive-metastore-postgresql
+    env_file:
+      - ./hadoop-hive.env
+    networks:
+      - hadoop
+    ports:
+      - "5432:5432"
+
+  spark-master:
+    image: bde2020/spark-master:3.1.1-hadoop3.2
+    container_name: spark-master
+    volumes:
+      - ./files:/data/spark/files
+      - ./python:/data/spark/python
+    ports:
+      - "28083:8080"
+      - "7077:7077"
+    environment:
+      - INIT_DAEMON_STEP=setup_spark
+    networks:
+      - hadoop
+  spark-worker-1:
+    image: bde2020/spark-worker:3.1.1-hadoop3.2
+    container_name: spark-worker-1
+    depends_on:
+      - spark-master
+    ports:
+      - "28081:8081"
+    environment:
+      - "SPARK_MASTER=spark://spark-master:7077"
+    networks:
+      - hadoop
+  spark-worker-2:
+    image: bde2020/spark-worker:3.1.1-hadoop3.2
+    container_name: spark-worker-2
+    depends_on:
+      - spark-master
+    ports:
+      - "28082:8081"
+    environment:
+      - "SPARK_MASTER=spark://spark-master:7077"
+    networks:
+      - hadoop
+
+  # opensearch
+  os01:
+    restart: always
+    image: opensearchproject/opensearch:latest
+    environment:
+      OPENSEARCH_JAVA_OPTS: "-Xms512m -Xmx512m" # minimum and maximum Java heap size, recommend setting both to 50% of system RAM
+      node.name: os01
+      discovery.seed_hosts: os01,os02,os03
+      cluster.initial_master_nodes: os01,os02,os03
+      plugins.security.ssl.transport.pemkey_filepath: certificates/os01/os01.key # relative path
+      plugins.security.ssl.transport.pemcert_filepath: certificates/os01/os01.pem
+      plugins.security.ssl.http.pemkey_filepath: certificates/os01/os01.key
+      plugins.security.ssl.http.pemcert_filepath: certificates/os01/os01.pem
+      DISABLE_INSTALL_DEMO_CONFIG: "true"
+      JAVA_HOME: /usr/share/opensearch/jdk
+      bootstrap.memory_lock: "true" # along with the memlock settings below, disables swapping
+      network.host: "0.0.0.0"
+    ulimits: 
+      memlock:
+        soft: -1
+        hard: -1
+    volumes:
+      - "./opensearch.yml:/usr/share/opensearch/config/opensearch.yml"
+      - "os-data1:/usr/share/opensearch/data"
+      - "./certs:/usr/share/opensearch/config/certificates:ro"
+    ports:
+      - 9200:9200
+      - 9600:9600 # required for Performance Analyzer
+  
+  os02:
+    restart: always
+    image: opensearchproject/opensearch:latest
+    environment:
+      OPENSEARCH_JAVA_OPTS: "-Xms512m -Xmx512m" # minimum and maximum Java heap size, recommend setting both to 50% of system RAM
+      node.name: os02
+      discovery.seed_hosts: os01,os02,os03
+      cluster.initial_master_nodes: os01,os02,os03
+      plugins.security.ssl.transport.pemkey_filepath: certificates/os02/os02.key # relative path
+      plugins.security.ssl.transport.pemcert_filepath: certificates/os02/os02.pem
+      plugins.security.ssl.http.pemkey_filepath: certificates/os02/os02.key
+      plugins.security.ssl.http.pemcert_filepath: certificates/os02/os02.pem
+      DISABLE_INSTALL_DEMO_CONFIG: "true"
+      JAVA_HOME: /usr/share/opensearch/jdk
+      bootstrap.memory_lock: "true" # along with the memlock settings below, disables swapping
+      network.host: "0.0.0.0"
+    ulimits: 
+      memlock:
+        soft: -1
+        hard: -1
+    volumes:
+      - "./opensearch.yml:/usr/share/opensearch/config/opensearch.yml"
+      - "os-data2:/usr/share/opensearch/data"
+      - "./certs:/usr/share/opensearch/config/certificates:ro"
+  
+  os03:
+    restart: always
+    image: opensearchproject/opensearch:latest
+    environment:
+      OPENSEARCH_JAVA_OPTS: "-Xms512m -Xmx512m" # minimum and maximum Java heap size, recommend setting both to 50% of system RAM
+      node.name: os03
+      discovery.seed_hosts: os01,os02,os03
+      cluster.initial_master_nodes: os01,os02,os03
+      plugins.security.ssl.transport.pemkey_filepath: certificates/os03/os03.key # relative path
+      plugins.security.ssl.transport.pemcert_filepath: certificates/os03/os03.pem
+      plugins.security.ssl.http.pemkey_filepath: certificates/os03/os03.key
+      plugins.security.ssl.http.pemcert_filepath: certificates/os03/os03.pem
+      DISABLE_INSTALL_DEMO_CONFIG: "true"
+      JAVA_HOME: /usr/share/opensearch/jdk
+      bootstrap.memory_lock: "true" # along with the memlock settings below, disables swapping
+      network.host: "0.0.0.0"
+    ulimits: 
+      memlock:
+        soft: -1
+        hard: -1
+    volumes:
+      - "./opensearch.yml:/usr/share/opensearch/config/opensearch.yml"
+      - "os-data3:/usr/share/opensearch/data"
+      - "./certs:/usr/share/opensearch/config/certificates:ro"
+  
+  kibana:
+    restart: always
+    image: opensearchproject/opensearch-dashboards:latest
+    ports:
+      - 5601:5601
+    volumes:
+      - "./certs:/usr/share/opensearch-dashboards/config/certificates:ro"
+      - "./opensearch-dashboards.yml:/usr/share/opensearch-dashboards/config/opensearch_dashboards.yml"
+    environment:
+      OPENSEARCH_HOSTS: '["https://os01:9200","https://os02:9200","https://os03:9200"]' # must be a string with no spaces when specified as an environment variable
+      DISABLE_INSTALL_DEMO_CONFIG: "true"
+
+  logstash:
+    image: opensearchproject/logstash-oss-with-opensearch-output-plugin:latest
+    container_name: logstash
+    volumes:
+      - "./logstash.conf:/usr/share/logstash/pipeline/logstash.conf"
+      - "./certs:/usr/share/logstash/config/certificates:ro"
+      - ".:/data/opensearch"
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    ports:
+      - 5011:5011
+      - 5012:5012
+      - 5013:5013
+      - "5044:5044"
+      - "5000:5000/tcp"
+      - "5000:5000/udp"
+    environment:
+      OPENSEARCH_HOSTS: '["https://os01:9200","https://os02:9200","https://os03:9200"]' # must be a string with no spaces when specified as an environment variable
+      LS_JAVA_OPTS: -Xmx2048m -Xms2048m
+      LOGSTASH_INTERNAL_PASSWORD: ${LOGSTASH_INTERNAL_PASSWORD:-}
+    depends_on:
+      - os01
+
+    
+
+volumes:
+  hadoop_datanode_1:
+  hadoop_datanode_2:
+  hadoop_namenode:
+  hadoop_historyserver:
+  os-data1:
+  os-data2:
+  os-data3:
+
+
+networks:
+  hadoop:
+
