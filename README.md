@@ -7,6 +7,6 @@ We went throught a lot of hardships to find the right tool, finally we used the 
 - Apache Druid 
 - Apache Superset
 
-## Visualisation of the data
+## Visualisation of the data
 
 TODO : Add pictures of the visualisation
