@@ -1,4 +1,4 @@
-# Setting up a Big Data environment with Docker 
+# Setting up a Big Data environment with Docker 
 
 This is a school project for the course "Big Data". The goal is to set up a Big Data environment with Docker.  We chose to analyze League of Legends data using the Riot API.
 
